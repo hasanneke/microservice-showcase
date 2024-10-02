@@ -1,0 +1,253 @@
+version: '3.9'
+
+services:
+  # Mongo
+  mongo:
+    image: mongo
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    networks:
+      - spring-cloud-network
+  
+  # Mongo Express
+  mongo-express:
+    image: mongo-express
+    ports:
+      - 9091:9091
+    networks:
+      - spring-cloud-network
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo:27017/
+      ME_CONFIG_BASICAUTH: false
+  
+  # Postgres
+  postgres:
+    image: postgres:14-alpine
+    ports:
+      - 5432:5432
+    networks:
+      - spring-cloud-network
+    volumes:
+      - pgdata:/var/lib/postgresql/data 
+    environment:
+      - POSTGRES_PASSWORD=123123
+      - POSTGRES_USER=mentoadmin
+      - POSTGRES_DB=mentodatabase
+  
+  # Elastic Search
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    environment:
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=123123
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+    networks:
+      - spring-cloud-network
+  
+  # Zoo Keeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    networks:
+      - spring-cloud-network
+    environment:
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # Kafka Message Broker
+  broker:
+    image: confluentinc/cp-kafka:latest
+    container_name: broker
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    networks:
+      - spring-cloud-network
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker:19092,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092,DOCKER://host.docker.internal:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  
+  # OpenLDAP
+  openldap:
+    image: bitnami/openldap:latest
+    ports:
+      - '1389:1389'
+      - '1636:1636'
+    networks:
+      - spring-cloud-network
+    environment:
+      - LDAP_ADMIN_USERNAME=admin
+      - LDAP_ADMIN_PASSWORD=adminpassword
+      - LDAP_USERS=user01,user02
+      - LDAP_PASSWORDS=password1,password2
+      - LDAP_ROOT=dc=mentoauth,dc=com
+    volumes:
+      - 'openldap_data:/bitnami/openldap'
+  
+  # MENTO AUTH SERVICE 
+  mentoauth:
+    container_name: mentoauth
+    image: mentoauth:0.0.1-SNAPSHOT
+    ports:
+      - '8081:8081'
+    networks:
+      - spring-cloud-network
+    environment:
+      - eureka.client.serviceUrl.defaultZone=http://namingserver:8761/eureka
+      - spring.ldap.url=ldap://openldap:1389
+      - JAVA_TOOL_OPTIONS=-Xmx128000K
+      - spring.kafka.consumer.bootstrap-servers=broker:19092
+      - spring.kafka.producer.bootstrap-servers=broker:19092
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+    deploy:
+      resources:
+        limits:
+          memory: 800m
+    depends_on:
+      - mentoapp
+      - api-gateway
+      - namingserver
+
+  # MENTO APP SERVICE 
+  mentoapp:
+    container_name: mentoapp
+    image: mentoapp:0.0.1-SNAPSHOT
+    ports:
+      - '8080:8080'
+    networks:
+      - spring-cloud-network
+    environment:
+      - spring.elastic.hostAndPort=elasticsearch:9200
+      - spring.elastic.username=elastic
+      - spring.elastic.password=123123
+      - eureka.client.serviceUrl.defaultZone=http://namingserver:8761/eureka
+      - spring.kafka.consumer.bootstrap-servers=broker:19092
+      - spring.kafka.producer.bootstrap-servers=broker:19092
+      - spring.datasource.url=jdbc:postgresql://postgres:5432/mentodatabase
+      - JAVA_TOOL_OPTIONS=-Xmx128000K
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+    deploy:
+      resources:
+        limits:
+          memory: 800m
+    depends_on:
+      - namingserver
+      - searchservice
+  
+  # SEARCH SERVICE 
+  searchservice:
+    container_name: searchservice
+    image: searchservice:0.0.5-SNAPSHOT
+    ports:
+      - '8084:8084'
+    networks:
+      - spring-cloud-network
+    environment:
+      - spring.elastic.hostAndPort=elasticsearch:9200
+      - spring.elastic.username=elastic
+      - spring.elastic.password=123123
+      - eureka.client.serviceUrl.defaultZone=http://namingserver:8761/eureka
+      - spring.kafka.consumer.bootstrap-servers=broker:19092
+      - spring.kafka.producer.bootstrap-servers=broker:19092
+      - JAVA_TOOL_OPTIONS=-Xmx128000K 
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+    deploy:
+      resources:
+        limits:
+          memory: 800m
+    depends_on:
+      - zookeeper
+      - broker
+      - elasticsearch
+      - namingserver
+  
+  # MAIL SERVICE 
+  mail-service:
+    container_name: mail-service
+    image: mail-service:0.0.2-SNAPSHOT
+    ports:
+      - '8083:8083'
+    networks:
+      - spring-cloud-network
+    environment:
+      - eureka.client.serviceUrl.defaultZone=http://namingserver:8761/eureka
+      - spring.kafka.consumer.bootstrap-servers=broker:19092
+      - spring.kafka.producer.bootstrap-servers=broker:19092
+      - JAVA_TOOL_OPTIONS=-Xmx128000K
+      - spring.data.mongodb.uri=mongodb://root:example@mongo:27017
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+    deploy:
+      resources:
+        limits:
+          memory: 800m
+    depends_on:
+      - zookeeper
+      - broker
+      - namingserver
+  
+  # NAMING SERVER 
+  namingserver:
+    container_name: namingserver
+    image: naming-server:0.0.1-SNAPSHOT
+    ports:
+      - '8761:8761'
+    networks:
+      - spring-cloud-network
+    environment:
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+  
+  # API GATEWAY 
+  api-gateway:
+    container_name: api-gateway
+    image: api-gateway:0.0.1-SNAPSHOT
+    ports:
+      - '8765:8765'
+    networks:
+      - spring-cloud-network
+    environment:
+      - eureka.client.serviceUrl.defaultZone=http://namingserver:8761/eureka
+      - JAVA_OPTIONS=-XX:+UseSerialGC
+
+# VOLUMES
+volumes:
+  pgdata:
+  openldap_data:
+    driver: local
+  elastic_data:
+    driver: local
+  kafka_data:
+    driver: local
+
+# NETWORKS
+networks:
+  spring-cloud-network:
+      driver: bridge

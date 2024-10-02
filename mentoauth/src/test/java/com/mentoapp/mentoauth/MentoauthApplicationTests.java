@@ -1,0 +1,13 @@
+package com.mentoapp.mentoauth;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class MentoauthApplicationTests {
+
+	@Test
+	void contextLoads() {
+	}
+
+}
