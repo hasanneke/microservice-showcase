@@ -13,8 +13,8 @@ This project is a comprehensive microservices-based application built using Spri
 
 The project includes the following Spring Boot services:
 
-1. **MentoAuth**: Authentication service
-2. **MentoApp**: Main application service
+1. **Auth**: Authentication service
+2. **App**: Main application service
 3. **SearchService**: Elasticsearch-based search functionality
 4. **MailService**: Email handling service
 5. **NamingServer**: Service discovery (Eureka)
